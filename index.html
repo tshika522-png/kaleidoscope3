@@ -9,27 +9,46 @@ body{
   margin:0;
   height:100vh;
   background:#fff;
-  transition:background-color 2.5s ease;
   overflow:hidden;
 }
+
 canvas{
   position:absolute;
   inset:0;
 }
+
+/* ===== 操作UI ===== */
 #controls{
   position:fixed;
-  bottom:12px;
   left:50%;
   transform:translateX(-50%);
-  background:rgba(0,0,0,.6);
-  padding:10px 14px;
-  border-radius:10px;
+  bottom:calc(12px + env(safe-area-inset-bottom));
+  width:min(92vw, 360px);
+  background:rgba(0,0,0,.65);
+  padding:12px;
+  border-radius:12px;
   display:flex;
+  flex-direction:column;
   gap:10px;
   z-index:10;
+  box-sizing:border-box;
 }
-#controls input, #controls button{
+
+#controls input[type="file"]{
+  color:#fff;
   font-size:12px;
+}
+
+#controls input[type="range"]{
+  width:100%;
+}
+
+#controls button{
+  font-size:13px;
+  padding:8px;
+  border:none;
+  border-radius:8px;
+  cursor:pointer;
 }
 </style>
 </head>
@@ -58,7 +77,6 @@ function resize(){
 resize();
 addEventListener("resize", resize);
 
-// ===== 状態 =====
 let images=[], idx=0;
 let angle=0, rotVel=0;
 let gyroX=0, gyroY=0;
@@ -67,7 +85,7 @@ let gyroEnabled=false;
 let offsetX=0, offsetY=0;
 let velX=0, velY=0;
 
-// ===== ジャイロ許可 =====
+/* ===== ジャイロ許可 ===== */
 gyroBtn.onclick = async ()=>{
   if(typeof DeviceOrientationEvent?.requestPermission==="function"){
     const res = await DeviceOrientationEvent.requestPermission();
@@ -79,26 +97,24 @@ gyroBtn.onclick = async ()=>{
 
 addEventListener("deviceorientation",e=>{
   if(!gyroEnabled) return;
-  gyroX = e.gamma || 0; // 横
-  gyroY = e.beta  || 0; // 前後
+  gyroX = e.gamma || 0;
+  gyroY = e.beta  || 0;
 });
 
-// ===== 側面タップ：画像切替 =====
+/* ===== 側面タップ：画像切替 ===== */
 let tapLock=false;
 addEventListener("devicemotion",e=>{
   if(!images.length || tapLock) return;
   const a=e.accelerationIncludingGravity;
   if(!a) return;
-
-  const power = Math.abs(a.x)+Math.abs(a.y)+Math.abs(a.z);
-  if(power>35){
+  if(Math.abs(a.x)+Math.abs(a.y)+Math.abs(a.z)>35){
     tapLock=true;
     idx=(idx+1)%images.length;
     setTimeout(()=>tapLock=false,600);
   }
 });
 
-// ===== 画像ロード =====
+/* ===== 画像ロード ===== */
 imageLoader.onchange=()=>{
   images=[];
   idx=0;
@@ -109,23 +125,23 @@ imageLoader.onchange=()=>{
   }
 };
 
-// ===== 描画 =====
+/* ===== 描画 ===== */
 function draw(){
   requestAnimationFrame(draw);
   if(!images.length) return;
 
   const img=images[idx];
-  const w=canvas.width, h=canvas.height;
-  const cx=w/2, cy=h/2;
+  const w=canvas.width,h=canvas.height;
+  const cx=w/2,cy=h/2;
   const r=Math.min(w,h)*0.48;
 
-  // --- 回転（横傾き） ---
+  // 回転（横）
   rotVel += gyroX * 0.00015;
-  rotVel *= 0.92;                 // 減衰
+  rotVel *= 0.92;
   rotVel = Math.max(Math.min(rotVel,0.02),-0.02);
   angle += rotVel;
 
-  // --- 位置移動（前後傾き＋揺らぎ） ---
+  // 位置（前後＋揺らぎ）
   velX += (Math.sin(Date.now()*0.001)+gyroY*0.02)*0.03;
   velY += (Math.cos(Date.now()*0.0013)+gyroY*0.02)*0.03;
   velX *= 0.9;
