@@ -2,25 +2,44 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>ゆもちのiPhone専用ビー玉万華鏡</title>
+<title>KALEIDOSCOPE - ビー玉万華鏡</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  body { margin:0; background:#000; display:flex; flex-direction:column; height:100vh; color:white; font-family:sans-serif; overflow:hidden; }
-  #controls { padding:10px; background:rgba(0,0,0,0.5); display:flex; gap:15px; flex-wrap:wrap; align-items:center; z-index:10; }
-  label { font-size:13px; display:flex; flex-direction:column; }
-  canvas { flex:1; display:block; }
+body{
+  margin:0;
+  height:100vh;
+  background:#fff;
+  transition:background-color 2.5s ease;
+  overflow:hidden;
+}
+canvas{
+  position:absolute;
+  inset:0;
+}
+#controls{
+  position:fixed;
+  bottom:12px;
+  left:50%;
+  transform:translateX(-50%);
+  background:rgba(0,0,0,.6);
+  padding:10px 14px;
+  border-radius:10px;
+  display:flex;
+  gap:10px;
+  z-index:10;
+}
+#controls input, #controls button{
+  font-size:12px;
+}
 </style>
 </head>
+
 <body>
+
 <div id="controls">
   <input type="file" id="imageLoader" accept="image/*" multiple>
-
-  <label>回転スピード
-    <input type="range" id="speedRange" min="-2" max="2" step="0.01" value="0.5">
-  </label>
-
-  <label>分割数（0〜24）
-    <input type="range" id="sliceRange" min="0" max="24" step="1" value="12">
-  </label>
+  <input type="range" id="sliceRange" min="0" max="24" value="12">
+  <button id="gyroBtn">🌀 ジャイロON</button>
 </div>
 
 <canvas id="canvas"></canvas>
@@ -28,115 +47,127 @@
 <script>
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-
-function resizeCanvas(){
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resizeCanvas();
-window.addEventListener("resize", resizeCanvas);
-
 const imageLoader = document.getElementById("imageLoader");
-const speedRange = document.getElementById("speedRange");
 const sliceRange = document.getElementById("sliceRange");
+const gyroBtn = document.getElementById("gyroBtn");
 
-let images = [];
-let currentIndex = 0;
-let fade = 1;
+function resize(){
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+resize();
+addEventListener("resize", resize);
 
-imageLoader.addEventListener("change", () => {
-  images = [];
-  currentIndex = 0;
-  for(let file of imageLoader.files){
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    img.onload = ()=>draw(0);
+// ===== 状態 =====
+let images=[], idx=0;
+let angle=0, rotVel=0;
+let gyroX=0, gyroY=0;
+let gyroEnabled=false;
+
+let offsetX=0, offsetY=0;
+let velX=0, velY=0;
+
+// ===== ジャイロ許可 =====
+gyroBtn.onclick = async ()=>{
+  if(typeof DeviceOrientationEvent?.requestPermission==="function"){
+    const res = await DeviceOrientationEvent.requestPermission();
+    if(res!=="granted") return;
+  }
+  gyroEnabled=true;
+  gyroBtn.textContent="🌀 ジャイロON✔";
+};
+
+addEventListener("deviceorientation",e=>{
+  if(!gyroEnabled) return;
+  gyroX = e.gamma || 0; // 横
+  gyroY = e.beta  || 0; // 前後
+});
+
+// ===== 側面タップ：画像切替 =====
+let tapLock=false;
+addEventListener("devicemotion",e=>{
+  if(!images.length || tapLock) return;
+  const a=e.accelerationIncludingGravity;
+  if(!a) return;
+
+  const power = Math.abs(a.x)+Math.abs(a.y)+Math.abs(a.z);
+  if(power>35){
+    tapLock=true;
+    idx=(idx+1)%images.length;
+    setTimeout(()=>tapLock=false,600);
+  }
+});
+
+// ===== 画像ロード =====
+imageLoader.onchange=()=>{
+  images=[];
+  idx=0;
+  for(const f of imageLoader.files){
+    const img=new Image();
+    img.src=URL.createObjectURL(f);
     images.push(img);
   }
-});
+};
 
-window.addEventListener("wheel",(e)=>{
-  if(images.length===0) return;
-  fade=0;
-  if(e.deltaY>0) currentIndex=(currentIndex+1)%images.length;
-  else currentIndex=(currentIndex-1+images.length)%images.length;
-});
-
-let angle=0,lastTime=0,moveStrength=200;
-
-// iPhoneジャイロ用
-let gyroX=0,gyroY=0;
-window.addEventListener("deviceorientation",(event)=>{
-  gyroX = event.gamma || 0; // 左右傾き
-  gyroY = event.beta || 0;  // 前後傾き
-});
-
-function draw(timestamp){
+// ===== 描画 =====
+function draw(){
   requestAnimationFrame(draw);
-  if(images.length===0) return;
-  const img = images[currentIndex];
+  if(!images.length) return;
 
-  const now = timestamp||0;
-  const delta = lastTime ? (now-lastTime)/1000 :0;
-  lastTime=now;
+  const img=images[idx];
+  const w=canvas.width, h=canvas.height;
+  const cx=w/2, cy=h/2;
+  const r=Math.min(w,h)*0.48;
 
-  const w=canvas.width,h=canvas.height,cx=w/2,cy=h/2;
-  const radius=Math.min(w,h)*0.48;
+  // --- 回転（横傾き） ---
+  rotVel += gyroX * 0.00015;
+  rotVel *= 0.92;                 // 減衰
+  rotVel = Math.max(Math.min(rotVel,0.02),-0.02);
+  angle += rotVel;
 
-  let speed=parseFloat(speedRange.value);
-  let slices=parseInt(sliceRange.value);
+  // --- 位置移動（前後傾き＋揺らぎ） ---
+  velX += (Math.sin(Date.now()*0.001)+gyroY*0.02)*0.03;
+  velY += (Math.cos(Date.now()*0.0013)+gyroY*0.02)*0.03;
+  velX *= 0.9;
+  velY *= 0.9;
+  offsetX += velX;
+  offsetY += velY;
 
-  angle += speed*delta + gyroX*0.002; // ジャイロ反映
-
-  if(fade<1) fade+=0.05;
-  ctx.globalAlpha=fade;
   ctx.clearRect(0,0,w,h);
 
-  // 円マスク
   ctx.save();
   ctx.beginPath();
-  ctx.arc(cx,cy,radius,0,Math.PI*2);
+  ctx.arc(cx,cy,r,0,Math.PI*2);
   ctx.clip();
 
-  const scale=Math.max((radius*2)/img.width,(radius*2)/img.height)*1.4;
-  const iw=img.width*scale, ih=img.height*scale;
+  const s=Math.max(r*2/img.width,r*2/img.height)*1.4;
+  const iw=img.width*s, ih=img.height*s;
 
-  const moveX=Math.cos(timestamp*0.00025)*moveStrength + gyroX*2;
-  const moveY=Math.sin(timestamp*0.00022)*moveStrength + gyroY*2;
-
-  if(slices===0){
-    ctx.save();
+  const n=+sliceRange.value;
+  if(n===0){
     ctx.translate(cx,cy);
     ctx.rotate(angle);
-    ctx.drawImage(img,-iw/2+moveX,-ih/2+moveY,iw,ih);
-    ctx.restore();
-    ctx.restore();
-    ctx.globalAlpha=1;
-    return;
+    ctx.drawImage(img,-iw/2+offsetX,-ih/2+offsetY,iw,ih);
+  }else{
+    const a2=Math.PI*2/n;
+    for(let i=0;i<n;i++){
+      ctx.save();
+      ctx.translate(cx,cy);
+      ctx.rotate(i*a2+angle);
+      ctx.beginPath();
+      const w2=r*1.8,h2=Math.tan(a2/2)*w2;
+      ctx.moveTo(0,0);
+      ctx.lineTo(w2,-h2);
+      ctx.lineTo(w2,h2);
+      ctx.closePath();
+      ctx.clip();
+      if(i%2) ctx.scale(-1,1);
+      ctx.drawImage(img,-iw/2+offsetX,-ih/2+offsetY,iw,ih);
+      ctx.restore();
+    }
   }
-
-  const sliceAngle=(Math.PI*2)/slices;
-  for(let i=0;i<slices;i++){
-    ctx.save();
-    ctx.translate(cx,cy);
-    ctx.rotate(sliceAngle*i+angle);
-    ctx.beginPath();
-    const clipW=radius*1.8;
-    const half=Math.tan(sliceAngle/2)*clipW;
-    ctx.moveTo(0,0);
-    ctx.lineTo(clipW,-half);
-    ctx.lineTo(clipW,half);
-    ctx.closePath();
-    ctx.clip();
-    if(i%2===1) ctx.scale(-1,1);
-    ctx.drawImage(img,-iw/2+moveX,-ih/2+moveY,iw,ih);
-    ctx.restore();
-  }
-
   ctx.restore();
-  ctx.globalAlpha=1;
 }
-
 requestAnimationFrame(draw);
 </script>
 </body>
